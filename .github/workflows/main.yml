@@ -1,0 +1,72 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g., v12.1)'
+        required: true
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # 1️⃣ Checkout
+      - uses: actions/checkout@v5
+
+      # 2️⃣ Initialize submodules
+      - name: Initialize submodules
+        run: git submodule update --init --recursive
+
+      # 3️⃣ Setup Android SDK & Build Tools
+      - name: Setup Android SDK
+        run: |
+          ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager "build-tools;29.0.3"
+
+      # 4️⃣ Setup Java
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # 5️⃣ Build nonRoot release APK
+      - uses: burrunan/gradle-cache-action@v3
+        with:
+          job-id: moonlight
+          arguments: assembleNonRootRelease
+          gradle-version: wrapper
+          properties: |
+            kotlin.js.compiler=ir
+            kotlin.parallel.tasks.in.project=true
+
+      # 6️⃣ List build outputs (调试，可选)
+      - name: List build outputs
+        run: ls -R app/build/outputs/apk/nonRoot/release
+
+      # 7️⃣ Sign APK
+      - uses: r0adkll/sign-android-release@v1
+        id: sign_app
+        with:
+          releaseDirectory: app/build/outputs/apk/nonRoot/release
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+      # 8️⃣ Move signed APK to standard name
+      - name: Rename signed APK
+        run: |
+          mv ${{ steps.sign_app.outputs.signedReleaseFile }} app-nonRoot-release.apk
+
+      # 9️⃣ Publish GitHub Release
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.event.inputs.release_tag }}
+          artifacts: "app-nonRoot-release.apk"
+          token: ${{ github.token }}
+          generateReleaseNotes: true
